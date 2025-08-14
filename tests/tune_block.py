@@ -224,9 +224,9 @@ def main():
     # M, K, N = 512, 1024 * 2, 1024 * 8
     M = K = N = 1024 * 4
     # M = 512
-    B_K = B_M = 16
+    B_K = B_M = 32
     DTYPE = torch.float16
-    SPARSITY = 0.3  # Our target!
+    SPARSITY = 0.5  # Our target!
 
     total_k_blocks = K // B_K
     P = int(total_k_blocks * SPARSITY)

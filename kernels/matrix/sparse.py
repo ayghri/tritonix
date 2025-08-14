@@ -27,32 +27,32 @@ def dense_block_sparse_kernel(
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
 
-
     m_start = pid_m * BLOCK_M
     n_start = pid_n * B_N
     a_offs_m = m_start + tl.arange(0, BLOCK_M)
     a_mask_m = a_offs_m < M
+    b_vals_offs = tl.arange(0, BLOCK_P * B_K * B_N)
     offs_p_vec = tl.arange(0, BLOCK_P)
-    b_offs = tl.arange(0, BLOCK_P * B_K * B_N)
 
     accumulator = tl.zeros((BLOCK_M, B_N), dtype=tl.float32)
 
+    indices_ptrs = b_indices_ptr + pid_n * P + offs_p_vec
+    b_ptrs = b_values_ptr + b_vals_offs + BLOCK_P * B_K * B_N
+
     for k_chunk_idx in range(0, tl.cdiv(P, BLOCK_P)):
-        indices_start_offset = pid_n * P + k_chunk_idx * BLOCK_P
         p_mask = offs_p_vec < P - k_chunk_idx * BLOCK_P
 
-        indices_ptrs = b_indices_ptr + indices_start_offset
-        block_row_k_vec = tl.load(
-            indices_ptrs + offs_p_vec, mask=p_mask, other=0
-        )
+        block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=0)
 
         k_offsets_scattered = (
             block_row_k_vec[:, None] * B_K + tl.arange(0, B_K)[None, :]
         )
         k_offsets_flat = tl.reshape(k_offsets_scattered, (BLOCK_P * B_K,))
+
         k_mask_flat = tl.reshape(
             tl.broadcast_to(p_mask[:, None], (BLOCK_P, B_K)), (BLOCK_P * B_K,)
         )
+
         a_ptrs = a_ptr + (
             a_offs_m[:, None] * stride_am + k_offsets_flat[None, :] * stride_ak
         )
@@ -60,16 +60,17 @@ def dense_block_sparse_kernel(
             a_ptrs, mask=a_mask_m[:, None] & k_mask_flat[None, :], other=0.0
         )
 
-        b_values_start_offset = indices_start_offset * (B_K * B_N)
         b_mask_flat = tl.reshape(
             tl.broadcast_to(p_mask[:, None, None], (BLOCK_P, B_K, B_N)),
             (BLOCK_P * B_K * B_N,),
         )
-        b_ptrs = b_values_ptr + b_values_start_offset + b_offs
         b_chunk_flat = tl.load(b_ptrs, mask=b_mask_flat, other=0.0)
         b_tile = tl.reshape(b_chunk_flat, (BLOCK_P * B_K, B_N))
 
         accumulator = tl.dot(a_tile, b_tile, accumulator)
+
+        indices_ptrs += BLOCK_P
+        b_ptrs += BLOCK_P * B_K * B_N
 
     accumulator = accumulator.to(c_ptr.dtype.element_ty)
     offs_c_m = m_start + tl.arange(0, BLOCK_M)
