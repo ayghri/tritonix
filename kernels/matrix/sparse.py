@@ -22,25 +22,24 @@ def dense_block_sparse_kernel(
     B_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_P: tl.constexpr,
-    GROUP_M: tl.constexpr = tl.constexpr(4),
+    GROUP_M: tl.constexpr = tl.constexpr(2),
 ):
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
 
-    # pid_m, pid_n = tl.swizzle2d( pid_m, pid_n, tl.cdiv(M, BLOCK_M), tl.cdiv(N, B_N), GROUP_M)
 
     m_start = pid_m * BLOCK_M
     n_start = pid_n * B_N
-    accumulator = tl.zeros((BLOCK_M, B_N), dtype=tl.float32)
-
     a_offs_m = m_start + tl.arange(0, BLOCK_M)
     a_mask_m = a_offs_m < M
-
     offs_p_vec = tl.arange(0, BLOCK_P)
     b_offs = tl.arange(0, BLOCK_P * B_K * B_N)
+
+    accumulator = tl.zeros((BLOCK_M, B_N), dtype=tl.float32)
+
     for k_chunk_idx in range(0, tl.cdiv(P, BLOCK_P)):
         indices_start_offset = pid_n * P + k_chunk_idx * BLOCK_P
-        p_mask = (k_chunk_idx * BLOCK_P + offs_p_vec) < P
+        p_mask = offs_p_vec < P - k_chunk_idx * BLOCK_P
 
         indices_ptrs = b_indices_ptr + indices_start_offset
         block_row_k_vec = tl.load(
@@ -104,17 +103,17 @@ def dense_blocksparse_mm(
     pid_n = tl.program_id(axis=1)  # this is in [0, cdiv(N,B_N)]
 
     # swizzle the program ids
-    num_pid_m = tl.cdiv(m, block_m)
-    num_pid_n = tl.cdiv(n, size_n)
-    pid_m, pid_n = tl.swizzle2d(pid_m, pid_n, num_pid_m, num_pid_n, group_m)
+    # num_pid_m = tl.cdiv(m, block_m)
+    # num_pid_n = tl.cdiv(n, size_n)
+    # pid_m, pid_n = tl.swizzle2d(pid_m, pid_n, num_pid_m, num_pid_n, group_m)
 
     # compiler hints
-    tl.assume(pid_m >= 0)
-    tl.assume(pid_n >= 0)
-    tl.assume(stride_cm > 0)
-    tl.assume(stride_cn > 0)
-    tl.multiple_of(n, size_n)
-    tl.multiple_of(k, size_k)
+    # tl.assume(pid_m >= 0)
+    # tl.assume(pid_n >= 0)
+    # tl.assume(stride_cm > 0)
+    # tl.assume(stride_cn > 0)
+    # tl.multiple_of(n, size_n)
+    # tl.multiple_of(k, size_k)
     # ----------------------
 
     accumulator = tl.zeros((block_m, size_n), dtype=tl.float32)
@@ -136,15 +135,16 @@ def dense_blocksparse_mm(
     b_ptrs = b_values_ptr + indices_start_offset * (size_k * size_n) + b_offs
 
     # compiler hints
-    tl.multiple_of(a_offs_m, block_m)
+    # tl.multiple_of(a_offs_m, block_m)
     # ----------------------
-    max_offs_p = tl.cdiv(k, size_k)
+    # max_offs_p = tl.cdiv(k, size_k)
 
     for k_chunk_idx in range(tl.cdiv(p, block_p)):
         p_mask = offs_p_vec < p - k_chunk_idx * block_p
 
         # shape (block_p,)
-        block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=max_offs_p)
+        # block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=max_offs_p)
+        block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=0.0)
         # print((pid_m, pid_n), block_row_k_vec)
 
         k_offsets_scattered = (

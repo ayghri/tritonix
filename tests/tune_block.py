@@ -2,6 +2,7 @@ import torch
 import triton
 from triton.testing import do_bench
 import triton.language as tl
+from kernels.matrix.sparse import dense_block_sparse_kernel
 
 
 @triton.jit
@@ -22,7 +23,7 @@ def dense_col_major_x_block_sparse_pipelined_kernel(
     B_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_P: tl.constexpr,
-    GROUP_M=tl.constexpr(4),
+    # GROUP_M=tl.constexpr(4),
 ):
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
@@ -223,9 +224,9 @@ def main():
     # M, K, N = 512, 1024 * 2, 1024 * 8
     M = K = N = 1024 * 4
     # M = 512
-    B_K, B_M = 8, 16
+    B_K = B_M = 16
     DTYPE = torch.float16
-    SPARSITY = 0.25  # Our target!
+    SPARSITY = 0.3  # Our target!
 
     total_k_blocks = K // B_K
     P = int(total_k_blocks * SPARSITY)
@@ -279,7 +280,7 @@ def main():
     pytorch_ms = do_bench(lambda: torch.matmul(A_torch, B_dense))
     C_torch = torch.matmul(A_torch, B_dense)
 
-    print("Tuning Experiment for A100 at 50% Sparsity, matrix sizes:")
+    print(f"Tuning Experiment for A100 at {SPARSITY*100}% Sparsity, matrix sizes:")
     print(f"M: {M}, K: {K}, N: {N}, B_K: {B_K}, B_M: {B_M}, P: {P}")
     print(f"PyTorch Dense Baseline: {pytorch_ms:.4f} ms")
     print("-" * 70)
@@ -290,7 +291,9 @@ def main():
 
     # for num_stages in [1, 3, 5, 6]:
 
-    print("Torch flops:", K * M * N / pytorch_ms/ 1024**3 / 1e-3 / DTYPE.itemsize)
+    print(
+        "Torch flops:", K * M * N / pytorch_ms / 1024**3 / 1e-3 / DTYPE.itemsize
+    )
     for cfg in configs:
         # Adjust P to be a multiple of BLOCK_P for optimal perf
         if P % cfg["BLOCK_P"] != 0:
@@ -300,7 +303,9 @@ def main():
 
         # We need to re-JIT the kernel for each set of constexpr arguments
         # kernel = dense_col_major_x_block_sparse_vectorized_kernel
-        kernel = dense_col_major_x_block_sparse_pipelined_kernel
+
+        # kernel = dense_col_major_x_block_sparse_pipelined_kernel
+        kernel = dense_block_sparse_kernel
 
         # The grid needs to be recomputed for each BLOCK_SIZE_M
         grid = (triton.cdiv(M, cfg["BLOCK_SIZE_M"]), triton.cdiv(N, B_M))
@@ -328,7 +333,7 @@ def main():
                 B_N=B_M,
                 BLOCK_M=cfg["BLOCK_SIZE_M"],
                 BLOCK_P=cfg["BLOCK_P"],
-                GROUP_M=2,
+                # GROUP_M=2,
                 num_warps=cfg["num_warps"],  # type: ignore
                 num_stages=3,
             )
@@ -348,7 +353,6 @@ def main():
             f"{cfg['BLOCK_SIZE_M']:<10}{cfg['BLOCK_P']:<10}{cfg['num_warps']:<12}"
             f"{triton_ms:<15.4f}{speedup:<10.2f}x{(C_triton - C_torch).square().mean():.5e}"
         )
-        
 
 
 if __name__ == "__main__":

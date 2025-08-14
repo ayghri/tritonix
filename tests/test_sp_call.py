@@ -87,7 +87,7 @@ def efficient_blocksparse_mm(
         block_p=block_p,
         group_m=group_m,
         num_warps=num_warps,
-        num_stages=3,
+        # num_stages=3,
     )
 
     return c
