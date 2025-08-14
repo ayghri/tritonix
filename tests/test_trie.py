@@ -1,5 +1,5 @@
 import unittest
-from kernels.utils.trie import MonotonicCascadeTrie
+from tritonix.utils.trie import MonotonicCascadeTrie
 
 
 class TestTrieInitialization(unittest.TestCase):

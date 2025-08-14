@@ -8,7 +8,7 @@ import triton.language as tl
 triton.runtime.jit
 
 
-from kernels.matrix.mma import matmul_kernel
+from tritonix.matrix.mma import matmul_kernel
 
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()

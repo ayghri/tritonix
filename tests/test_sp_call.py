@@ -1,7 +1,7 @@
 import torch
 import triton
-from kernels.matrix.sparse import dense_blocksparse_mm  # Your kernel
-from kernels.utils.initialize import create_blocksparse  # Your utility
+from tritonix.matrix.sparse import dense_blocksparse_mm  # Your kernel
+from tritonix.utils.initialize import create_blocksparse  # Your utility
 from triton.testing import do_bench
 
 

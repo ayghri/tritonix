@@ -8,9 +8,9 @@ from skopt.utils import use_named_args
 import time
 
 
-from kernels.matrix.mma import matmul_kernel
-from kernels.matrix.mma import gemm_splitk_kernel
-from kernels.utils.trie import MonotonicCascadeTrie
+from tritonix.matrix.mma import matmul_kernel
+from tritonix.matrix.mma import gemm_splitk_kernel
+from tritonix.utils.trie import MonotonicCascadeTrie
 
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()

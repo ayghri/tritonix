@@ -1,5 +1,5 @@
 [project]
-name = "kernels"
+name = "tritonix"
 version = "0.1.0"
 description = ""
 authors = [
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [{include = "kernels", from = "./"}]
+packages = [{include = "tritonix", from = "./"}]
 
 
 [build-system]

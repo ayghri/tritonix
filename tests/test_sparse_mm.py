@@ -1,7 +1,7 @@
 import torch
 import pytest
-from kernels.matrix.sparse import dense_blocksparse_mm
-from kernels.utils.initialize import create_blocksparse
+from tritonix.matrix.sparse import dense_blocksparse_mm
+from tritonix.utils.initialize import create_blocksparse
 import triton
 
 
