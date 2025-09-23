@@ -17,19 +17,19 @@ def get_mma_config(M, N, K, GROUP_M, num_warps, num_stages):
 
 def get_autotune_configs_conv2d():
     return [
-        get_mma_config(64, 32, 16, 8, 4, 3),
-        get_mma_config(64, 32, 32, 8, 4, 3),
-        get_mma_config(128, 32, 32, 8, 4, 3),
-        get_mma_config(128, 64, 16, 4, 4, 3),
-        get_mma_config(128, 64, 32, 8, 4, 3),
-        get_mma_config(128, 64, 64, 8, 4, 3),
-        get_mma_config(128, 64, 64, 8, 8, 3),
-        get_mma_config(128, 128, 32, 8, 4, 3),
-        get_mma_config(128, 128, 32, 8, 4, 3),
-        get_mma_config(128, 128, 32, 8, 4, 3),
-        get_mma_config(128, 128, 64, 8, 4, 3),
-        get_mma_config(128, 128, 64, 8, 4, 3),
-        get_mma_config(128, 128, 64, 8, 8, 3),
+        get_mma_config(64, 32, 16, 8, 4, 2),
+        get_mma_config(64, 32, 32, 8, 4, 2),
+        get_mma_config(128, 32, 32, 8, 4, 2),
+        get_mma_config(128, 64, 16, 4, 4, 2),
+        get_mma_config(128, 64, 32, 8, 4, 2),
+        get_mma_config(128, 64, 64, 8, 4, 2),
+        get_mma_config(128, 64, 64, 8, 8, 2),
+        get_mma_config(128, 128, 32, 8, 4, 2),
+        get_mma_config(128, 128, 32, 8, 4, 2),
+        get_mma_config(128, 128, 32, 8, 4, 2),
+        get_mma_config(128, 128, 64, 8, 4, 2),
+        get_mma_config(128, 128, 64, 8, 4, 2),
+        get_mma_config(128, 128, 64, 8, 8, 2),
     ]
 
 
@@ -86,8 +86,8 @@ def enable_cudnn_optimizations():
 
 def enable_torch_optimizations(
     allow_tf32=True,
-    high_precision=True,
-    fp16_reduced_precision=True,
+    high_precision=False,
+    fp16_reduced_precision=False,
 ):
     """
     Enables various optimizations in PyTorch for matmul operations.

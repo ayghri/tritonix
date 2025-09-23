@@ -74,8 +74,7 @@ def conv2d_forward_kernel(
 
     acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
-    NUM_LOOPS: tl.constexpr = tl.cdiv(GEMM_K, BLOCK_SIZE_K)
-    for idx_k in tl.range(0, NUM_LOOPS, num_stages=2):
+    for idx_k in tl.range(0, tl.cdiv(GEMM_K, BLOCK_SIZE_K)):
         gemm_k = idx_k * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)
         offs_cin = gemm_k // (FILTER_H * FILTER_W)
         c_fh_fw_residual = gemm_k % (FILTER_H * FILTER_W)
