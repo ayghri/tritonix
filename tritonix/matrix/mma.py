@@ -13,7 +13,8 @@ def swizzle2d_rows(i, j, size_i, size_j, size_g):
     pid_m = group_start + (ij % num_groups_per_stripe) % group_size
     pid_n = (ij % num_groups_per_stripe) // group_size
     group_m = pid_m // size_g
-    start = 0
+    is_odd_group = group_m % 2 == 1
+    start = is_odd_group * (size_j - 1)
     if group_m % 2 == 1:
         start = size_j - 1
         pid_n = size_j - 1 - pid_n

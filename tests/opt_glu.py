@@ -9,8 +9,8 @@ import torch.nn.functional as F
 # from time import time
 import time
 
-from kernels.fused.glu import glu_kernel
-from kernels.matrix.mma import matmul_kernel
+from tritonix.fused.glu import glu_kernel
+from tritonix.matrix.mma import matmul_kernel
 
 
 # TUNE = True

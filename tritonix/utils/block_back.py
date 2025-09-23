@@ -1,11 +1,11 @@
 import triton
 import triton.language as tl
 import torch
-from tritonix.utils.initialize import create_blocksparse
+from kernels.utils.initialize import create_blocksparse
 
 
 @triton.jit
-def dense_block_sparse_kernel_v0(
+def dense_block_sparse_kernel(
     a_ptr,
     b_values_ptr,
     b_indices_ptr,
@@ -22,20 +22,11 @@ def dense_block_sparse_kernel_v0(
     B_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_P: tl.constexpr,
+    GROUP_M: tl.constexpr = tl.constexpr(2),
 ):
-    """
-    a is column major, b is block-sparse with P non-zero blocks per column.
-    each block is of size (B_K, B_N). b is stored in contiguous column-wise order.
-    each block is row major.
-    Each program id corresponds to an output block of size (BLOCK_M, B_N).
-
-    """
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
 
-    pid_m, pid_n = tl.swizzle2d(
-        pid_m, pid_n, tl.cdiv(M, BLOCK_M), tl.cdiv(N, B_N), 16
-    )
 
     m_start = pid_m * BLOCK_M
     n_start = pid_n * B_N
@@ -91,95 +82,6 @@ def dense_block_sparse_kernel_v0(
 
 
 @triton.jit
-def dense_block_sparse_kernel(
-    a_ptr,
-    b_values_ptr,
-    b_indices_ptr,
-    c_ptr,
-    M,
-    N,
-    K,
-    stride_am,
-    stride_ak,
-    stride_cm,
-    stride_cn,
-    P: tl.constexpr,
-    B_K: tl.constexpr,
-    B_N: tl.constexpr,
-    BLOCK_M: tl.constexpr,
-    BLOCK_P: tl.constexpr,
-    # GROUP_M: tl.constexpr = tl.constexpr(2),
-):
-    pid_m = tl.program_id(axis=0)
-    pid_n = tl.program_id(axis=1)
-
-    # pid_m, pid_n = tl.swizzle2d(
-    #     pid_m, pid_n, tl.cdiv(M, BLOCK_M), tl.cdiv(N, B_N), 4
-    # )
-
-    m_start = pid_m * BLOCK_M
-    n_start = pid_n * B_N
-
-    a_offs_m = m_start + tl.arange(0, BLOCK_M)
-    a_mask_m = a_offs_m < M
-
-    offs_p_vec = tl.arange(0, BLOCK_P)
-
-    accumulator = tl.zeros((BLOCK_M, B_N), dtype=tl.float32)
-
-    indices_ptrs = b_indices_ptr + pid_n * P + offs_p_vec
-    b_ptrs = (
-        # b_values_ptr + pid_n * P * B_K * B_N + tl.arange(0, BLOCK_P * B_K * B_N)
-        b_values_ptr
-        + pid_n * P * B_K * B_N
-        + offs_p_vec[:, None] * B_K * B_N
-        + tl.arange(0, B_K * B_N)[None, :]
-    )
-
-    for k_chunk_idx in range(0, tl.cdiv(P, BLOCK_P)):
-        p_mask = offs_p_vec < P - k_chunk_idx * BLOCK_P
-        k_mask_flat = tl.reshape(
-            tl.broadcast_to(p_mask[:, None], (BLOCK_P, B_K)), (BLOCK_P * B_K,)
-        )
-
-        block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=0)
-
-        # b_mask_flat = tl.reshape(
-        #     tl.broadcast_to(p_mask[:, None, None], (BLOCK_P, B_K, B_N)),
-        #     (BLOCK_P * B_K * B_N,),
-        # )
-        b_mask_flat = p_mask[:, None]
-
-        b_chunk_flat = tl.load(b_ptrs, mask=b_mask_flat, other=0.0)
-        b_tile = tl.reshape(b_chunk_flat, (BLOCK_P * B_K, B_N))
-
-        k_offsets_scattered = (
-            block_row_k_vec[:, None] * B_K + tl.arange(0, B_K)[None, :]
-        )
-        k_offsets_flat = tl.reshape(k_offsets_scattered, (BLOCK_P * B_K,))
-
-        a_ptrs = a_ptr + (
-            a_offs_m[:, None] * stride_am + k_offsets_flat[None, :] * stride_ak
-        )
-        a_tile = tl.load(
-            a_ptrs, mask=a_mask_m[:, None] & k_mask_flat[None, :], other=0.0
-        )
-
-        accumulator = tl.dot(a_tile, b_tile, accumulator)
-
-        indices_ptrs += BLOCK_P
-        b_ptrs += BLOCK_P * B_K * B_N
-
-    accumulator = accumulator.to(c_ptr.dtype.element_ty)
-    offs_c_n = n_start + tl.arange(0, B_N)
-    c_ptrs = c_ptr + (
-        a_offs_m[:, None] * stride_cm + offs_c_n[None, :] * stride_cn
-    )
-    c_mask = (a_mask_m[:, None]) & (offs_c_n[None, :] < N)
-    tl.store(c_ptrs, accumulator, mask=c_mask)
-
-
-@triton.jit
 def dense_blocksparse_mm(
     a_ptr,
     b_values_ptr,
@@ -214,6 +116,7 @@ def dense_blocksparse_mm(
     # tl.multiple_of(k, size_k)
     # ----------------------
 
+    accumulator = tl.zeros((block_m, size_n), dtype=tl.float32)
     m_start = pid_m * block_m
     n_start = pid_n * size_n
 
@@ -231,37 +134,52 @@ def dense_blocksparse_mm(
     k_offs = tl.arange(0, size_k)
     b_ptrs = b_values_ptr + indices_start_offset * (size_k * size_n) + b_offs
 
-    accumulator = tl.zeros((block_m, size_n), dtype=tl.float32)
+    # compiler hints
+    # tl.multiple_of(a_offs_m, block_m)
+    # ----------------------
+    # max_offs_p = tl.cdiv(k, size_k)
 
     for k_chunk_idx in range(tl.cdiv(p, block_p)):
         p_mask = offs_p_vec < p - k_chunk_idx * block_p
 
+        # shape (block_p,)
+        # block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=max_offs_p)
         block_row_k_vec = tl.load(indices_ptrs, mask=p_mask, other=0.0)
-        b_tile = tl.load(b_ptrs, mask=p_mask[:, None], other=0.0)
-        b_tile = tl.reshape(b_tile, (block_p * size_k, size_n))
+        # print((pid_m, pid_n), block_row_k_vec)
 
         k_offsets_scattered = (
             block_row_k_vec[:, None] * size_k + k_offs[None, :]
         )
         k_offsets_flat = tl.reshape(k_offsets_scattered, (block_p * size_k,))
-        a_ptrs = a_ptr + a_offs_m[:, None] + k_offsets_flat[None, :] * m
 
+        a_ptrs = a_ptr + a_offs_m[:, None] + k_offsets_flat[None, :] * m
+        # a_mask = tl.reshape((p_mask[:, None]) & (k_offsets_scattered < k), (block_p, size_k))
+
+        # Shape (block_m, block_p * size_k)
         a_tile = tl.load(
             a_ptrs,
             mask=k_offsets_flat[None, :] < k,
             other=0.0,
         )
 
-        indices_ptrs += block_p
-        b_ptrs += block_p * size_k * size_n
+        # Shape (block_p, size_k * size_n)
+        b_tile = tl.load(b_ptrs, mask=p_mask[:, None], other=0.0)
+        b_tile = tl.reshape(b_tile, (block_p * size_k, size_n))
+        # print((pid_m, pid_n), b_tile)
+
+        # print("Shapes:", a_tile.shape, b_tile.shape, accumulator.shape)
         accumulator = tl.dot(a_tile, b_tile, accumulator, allow_tf32=False)
 
+        b_ptrs += block_p * size_k * size_n
+        indices_ptrs += block_p
+
     accumulator = accumulator.to(c_ptr.dtype.element_ty)
+    offs_c_m = m_start + tl.arange(0, block_m)
     offs_c_n = n_start + tl.arange(0, size_n)
     c_ptrs = c_ptr + (
-        a_offs_m[:, None] * stride_cm + offs_c_n[None, :] * stride_cn
+        offs_c_m[:, None] * stride_cm + offs_c_n[None, :] * stride_cn
     )
-    c_mask = (a_offs_m[:, None] < m) & (offs_c_n[None, :] < n)
+    c_mask = (offs_c_m[:, None] < m) & (offs_c_n[None, :] < n)
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
@@ -319,7 +237,7 @@ if __name__ == "__main__":
         )
         # print("torch dense matmul:\n", torch.matmul(a, B_dense))
         # print("triton dense blocksparse mm:\n", c)
-        # print("Difference:\n", torch.abs(torch.matmul(a, B_dense) - c))
+        print("Difference:\n", torch.abs(torch.matmul(a, B_dense) - c))
         print(
             "Max difference:",
             torch.max(torch.abs(torch.matmul(a, B_dense) - c)),

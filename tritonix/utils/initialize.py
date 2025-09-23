@@ -1,18 +1,18 @@
 import torch
 
 
-def create_blocksparse(K, N, B_K, B_M, P, dtype, device="cuda", seed=None):
+def create_blocksparse(K, N, SIZE_K, SIZE_N, P, dtype, device="cuda", seed=None):
     """
     Creates a block-sparse representation where, within each block-column,
     the non-zero blocks are sorted by their K-index.
     """
-    num_block_cols = N // B_M
-    total_k_blocks = K // B_K
+    num_block_cols = N // SIZE_N
+    total_k_blocks = K // SIZE_K
     if seed is not None:
         torch.manual_seed(seed)
 
     b_values = torch.randn(
-        (num_block_cols * P, B_K, B_M), dtype=dtype, device=device
+        (num_block_cols * P, SIZE_K, SIZE_N), dtype=dtype, device=device
     )
     b_indices = torch.empty(
         num_block_cols * P, dtype=torch.int32, device=device
@@ -30,8 +30,8 @@ def create_blocksparse(K, N, B_K, B_M, P, dtype, device="cuda", seed=None):
             block_row_k = b_indices[nnz_idx]
             vals = b_values[nnz_idx]
             B_dense[
-                block_row_k * B_K : (block_row_k + 1) * B_K,
-                j * B_M : (j + 1) * B_M,
+                block_row_k * SIZE_K : (block_row_k + 1) * SIZE_K,
+                j * SIZE_N : (j + 1) * SIZE_N,
             ] = vals
 
     return b_values, b_indices, B_dense

@@ -2,7 +2,8 @@ import torch
 import triton
 from triton.testing import do_bench
 import triton.language as tl
-from kernels.matrix.sparse import dense_block_sparse_kernel
+from tritonix.matrix.sparse import dense_block_sparse_kernel_v0 as dense_block_sparse_kernel
+from tritonix.utils.initialize import create_blocksparse
 
 
 @triton.jit
@@ -152,79 +153,14 @@ def dense_col_major_x_block_sparse_pipelined_kernel(
 #     return b_values, b_indices, B_dense_reconstructed
 
 
-def create_block_sparse_b_sorted(K, N, B_K, B_M, P, dtype, device="cuda"):
-    """
-    Creates a block-sparse representation where, within each block-column,
-    the non-zero blocks are sorted by their K-index.
-    This improves memory locality for the gather operation on matrix A.
-    """
-    num_block_cols = N // B_M
-
-    # These will hold the final, sorted data
-    final_b_values = torch.empty(
-        num_block_cols * P * B_K * B_M, dtype=dtype, device=device
-    )
-    final_b_indices = torch.empty(
-        num_block_cols * P, dtype=torch.int32, device=device
-    )
-
-    # Temporary dense matrix to pull data from
-    B_dense_temp = torch.randn((K, N), device=device, dtype=dtype)
-
-    total_k_blocks = K // B_K
-
-    for j in range(num_block_cols):
-        # 1. Select P random K-indices for this column
-        k_indices_for_col = torch.randperm(total_k_blocks, device=device)[:P]
-
-        # 2. <<< THE KEY STEP: SORT THE INDICES >>>
-        sorted_k_indices, sort_order = torch.sort(k_indices_for_col)
-
-        # Store the sorted indices for this block-column
-        final_b_indices[j * P : (j + 1) * P] = sorted_k_indices
-
-        # 3. Permute the blocks according to the sort order and store them
-        for p_idx in range(P):
-            # original_k_idx = k_indices_for_col[sort_order[p_idx]]
-
-            # This is not efficient, but correct for generation.
-            # In a real scenario, you'd permute existing blocks.
-            block = B_dense_temp[
-                sorted_k_indices[p_idx] * B_K : (sorted_k_indices[p_idx] + 1)
-                * B_K,
-                j * B_M : (j + 1) * B_M,
-            ]
-
-            # Place the correctly ordered block into the final values tensor
-            final_b_values[
-                (j * P + p_idx) * (B_K * B_M) : (j * P + p_idx + 1)
-                * (B_K * B_M)
-            ] = block.flatten()
-
-    # Create the dense version for PyTorch using the same sorted data
-    B_dense_reconstructed = torch.zeros((K, N), device=device, dtype=dtype)
-    for j in range(num_block_cols):
-        for p_idx in range(P):
-            nnz_idx = j * P + p_idx
-            block_row_k = final_b_indices[nnz_idx]
-            vals = final_b_values[
-                nnz_idx * B_K * B_M : (nnz_idx + 1) * B_K * B_M
-            ].view(B_K, B_M)
-            B_dense_reconstructed[
-                block_row_k * B_K : (block_row_k + 1) * B_K,
-                j * B_M : (j + 1) * B_M,
-            ] = vals
-
-    return final_b_values, final_b_indices, B_dense_reconstructed
-
-
 # --- Main Tuning Script ---
 def main():
     # Fixed problem parameters
-    # M, K, N = 512, 1024 * 2, 1024 * 8
+    # M, K, N = 512, 1024 * 4, 1024 * 4
     M = K = N = 1024 * 4
+
     # M = 512
-    B_K = B_M = 32
+    B_K = B_N = 16
     DTYPE = torch.float16
     SPARSITY = 0.5  # Our target!
 
@@ -267,21 +203,28 @@ def main():
 
     # Pre-create data
     A_torch = torch.randn((M, K), device="cuda", dtype=DTYPE)
-    A_triton = A_torch.t().contiguous().t()
+    A_triton = (A_torch*1.).t().contiguous().t()
     # A_triton = A_torch
     # b_values, b_indices, B_dense = create_block_sparse_b_and_dense_b(
     #     K, N, B_K, B_M, P, DTYPE
     # )
-    b_values, b_indices, B_dense = create_block_sparse_b_sorted(
-        K, N, B_K, B_M, P, DTYPE
+    b_values, b_indices, B_dense = create_blocksparse(K, N, B_K, B_N, P, DTYPE)
+
+    print("Sparsity of B_dense:", (B_dense != 0).sum().item()/K/N)
+    print(
+        "Dense abs mean vs B_values mean:",
+        B_dense.abs().mean().item()/b_values.numel() * B_dense.numel(),
+        b_values.abs().mean().item(),
     )
 
     # Benchmark PyTorch once as a baseline
     pytorch_ms = do_bench(lambda: torch.matmul(A_torch, B_dense))
     C_torch = torch.matmul(A_torch, B_dense)
 
-    print(f"Tuning Experiment for A100 at {SPARSITY*100}% Sparsity, matrix sizes:")
-    print(f"M: {M}, K: {K}, N: {N}, B_K: {B_K}, B_M: {B_M}, P: {P}")
+    print(
+        f"Tuning Experiment for A100 at {SPARSITY * 100}% Sparsity, matrix sizes:"
+    )
+    print(f"M: {M}, K: {K}, N: {N}, B_K: {B_K}, B_M: {B_N}, P: {P}")
     print(f"PyTorch Dense Baseline: {pytorch_ms:.4f} ms")
     print("-" * 70)
     print(
@@ -308,14 +251,15 @@ def main():
         kernel = dense_block_sparse_kernel
 
         # The grid needs to be recomputed for each BLOCK_SIZE_M
-        grid = (triton.cdiv(M, cfg["BLOCK_SIZE_M"]), triton.cdiv(N, B_M))
+        grid = (triton.cdiv(M, cfg["BLOCK_SIZE_M"]), triton.cdiv(N, B_N))
 
-        C_triton = torch.empty((M, N), device="cuda", dtype=DTYPE)
+        C_triton = torch.zeros((M, N), device="cuda", dtype=DTYPE)
 
         # Run benchmark
         def run_kernel(a):
             # A = a.t().contiguous().t()  # Ensure column-major order
             A = A_triton
+            # C_triton = torch.empty((M, N), device="cuda", dtype=DTYPE)
             return kernel[grid](
                 a,
                 b_values,
@@ -330,7 +274,7 @@ def main():
                 C_triton.stride(1),
                 P=P_adj,
                 B_K=B_K,
-                B_N=B_M,
+                B_N=B_N,
                 BLOCK_M=cfg["BLOCK_SIZE_M"],
                 BLOCK_P=cfg["BLOCK_P"],
                 # GROUP_M=2,
@@ -351,7 +295,7 @@ def main():
 
         print(
             f"{cfg['BLOCK_SIZE_M']:<10}{cfg['BLOCK_P']:<10}{cfg['num_warps']:<12}"
-            f"{triton_ms:<15.4f}{speedup:<10.2f}x{(C_triton - C_torch).square().mean():.5e}"
+            f"{triton_ms:<15.4f}x{speedup:<10.2f}{(C_triton - C_torch).abs().max()}"
         )
 
 

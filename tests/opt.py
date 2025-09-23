@@ -18,8 +18,8 @@ DTYPE = torch.float16
 FLOAT_SIZE = torch.finfo(DTYPE).bits // 8
 print(f"Using device {DEVICE}, dtype {DTYPE}, {FLOAT_SIZE} bytes.")
 torch.set_float32_matmul_precision("high")
-m = 1024 * 8
-n = 1024 * 16
+m = 1024 * 2
+n = 1024 * 2
 k = 1024 * 2
 a = torch.randn((m, k), device=DEVICE, dtype=DTYPE)
 b = torch.randn((k, n), device=DEVICE, dtype=DTYPE)
@@ -151,7 +151,7 @@ def objective(**params):
     )
 
 
-from skopt import gp_minimize
+from skopt import gp_minimize as minimize
 #from skopt import forest_minimize as minimize
 # from skopt import gbrt_minimize as minimize
 
@@ -161,16 +161,16 @@ def callback(res):
     # print(res.x)
 
 
-res_gp = minimize(
-    objective,
-    space,
-    n_calls=100,
-    # random_state=42,
-    verbose=True,
-    callback=callback,
-)
+# res_gp = minimize(
+#     objective,
+#     space,
+#     n_calls=64,
+#     random_state=42,
+#     verbose=True,
+#     callback=callback,
+# )
 
-print("Best score=%.4f" % res_gp.fun)
+# print("Best score=%.4f" % res_gp.fun)
 
 
 # params = best
@@ -182,22 +182,22 @@ print("Best score=%.4f" % res_gp.fun)
 # group_m = params["group_m"]
 # num_stages = params["n_stages"]
 # num_warps = 2 ** params["n_w"]
-print("Best parameters:", res_gp.x)
-res_gp.x = [int(x) for x in res_gp.x]
-block_m = 2 ** res_gp.x[0]
-block_n = 2 ** res_gp.x[1]
-block_k = 2 ** res_gp.x[2]
-group_m = res_gp.x[3]
-# split_k = res_gp.x[4]
-num_stages = res_gp.x[-2]
-num_warps = res_gp.x[-1]
+# print("Best parameters:", res_gp.x)
+# res_gp.x = [int(x) for x in res_gp.x]
+# block_m = 2 ** res_gp.x[0]
+# block_n = 2 ** res_gp.x[1]
+# block_k = 2 ** res_gp.x[2]
+# group_m = res_gp.x[3]
+# # split_k = res_gp.x[4]
+# num_stages = res_gp.x[-2]
+# num_warps = res_gp.x[-1]
 if __name__ == "__main__":
-    block_m = 128
+    block_m = 64
     block_n = 128
     block_k = 32
-    group_m = 4
+    group_m = 9
     # split_k = res_gp.x[4]
-    num_stages = 2
+    num_stages = 3
     num_warps = 4
 
     print(

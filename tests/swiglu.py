@@ -7,7 +7,7 @@ import torch
 import triton
 
 
-class SwiGLUFFN(nn.Module):
+class GLUFFN(nn.Module):
     def __init__(
         self,
         in_features: int,
@@ -33,7 +33,7 @@ class SwiGLUFFN(nn.Module):
         return x12
 
 
-class SwiGLUFFNFused(SwiGLU):
+class GLUFFNFused(SwiGLU):
     def __init__(
         self,
         in_features: int,
@@ -68,10 +68,10 @@ torch.set_float32_matmul_precision("high")
 x = torch.randn(B, D, dtype=DTYPE, device=DEVICE)
 
 
-torch_glu = SwiGLUFFN(
+torch_glu = GLUFFN(
     in_features=D, hidden_features=K, out_features=D, bias=False
 ).to(DEVICE, dtype=DTYPE)
-xform_glu = SwiGLUFFNFused(
+xform_glu = GLUFFNFused(
     in_features=D, hidden_features=K, out_features=D, bias=False
 ).to(DEVICE, dtype=DTYPE)
 

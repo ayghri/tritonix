@@ -106,7 +106,7 @@ def swiglu_kernel(
     m,
     n,
     k,
-    l,
+    f,
     stride_xm,
     stride_xk,
     stride_wk,
@@ -186,8 +186,8 @@ def swiglu_kernel(
     )
 
     z_ptrs = z_ptr + stride_zm * offs_xm[:, None] + stride_zl * offs_l[None, :]
-    for l_loop in range(0, tl.cdiv(l, block_l)):
-        l_remaining = l - l_loop * block_k
+    for l_loop in range(0, tl.cdiv(f, block_l)):
+        l_remaining = f - l_loop * block_k
         mask = offs_l < l_remaining
 
         w3 = tl.load(w3_ptrs, mask=mask[None, :], other=0.0)

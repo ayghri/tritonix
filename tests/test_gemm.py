@@ -1,5 +1,5 @@
 import torch
-from kernels.utils.torch import enable_cudnn_optimizations
+from tritonix.utils.torch import enable_cudnn_optimizations
 m = 1024
 n = 2048
 k = 1024 * 8

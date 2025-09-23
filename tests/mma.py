@@ -3,15 +3,15 @@ import torch
 import numpy as np
 from typing import Any
 
-from kernels.matrix.mma import matmul_kernel
-from kernels.utils.triton import get_autotune_configs
-from kernels.matrix.mma import gemm_splitk_kernel
-from kernels.utils.torch import (
+from tritonix.matrix.mma import matmul_kernel
+from tritonix.utils.triton import get_autotune_configs
+from tritonix.matrix.mma import gemm_splitk_kernel
+from tritonix.utils.torch import (
     enable_torch_optimizations,
     # disable_torch_optimizations,
 )
-from kernels.utils.triton import get_splitk_autotune_configs
-from kernels.utils.triton import wrap_autotuner
+from tritonix.utils.triton import get_splitk_autotune_configs
+from tritonix.utils.triton import wrap_autotuner
 
 
 def is_cuda():
@@ -151,9 +151,9 @@ if __name__ == "__main__":
     enable_torch_optimizations()
     # disable_torch_optimizations()
 
-    # m = 1024
-    # n = 1024 * 2
-    m = n = 1024 * 4
+    m = 1024
+    n = 1024 * 2
+    # m = n = 1024 * 4
 
     @triton.testing.perf_report(configs)
     def benchmark(k, provider):

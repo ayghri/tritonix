@@ -197,7 +197,7 @@ def main():
     # Compare results
     print(
         "Triton output matches reference:",
-        torch.allclose(c, ref_c, atol=1e-1, rtol=1e-2),
+        torch.allclose(c, ref_c, atol=1e-3, rtol=1e-2),
     )
 
 

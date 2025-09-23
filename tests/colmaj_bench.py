@@ -138,7 +138,7 @@ def main():
     M, K, N = 1024, 4096, 2048
 
     # Block sparse parameters
-    B_K, B_N = 16, 32
+    B_K, B_N = 16, 16
 
     # Kernel meta-parameters
     BLOCK_SIZE_M = 128
