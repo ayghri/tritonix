@@ -8,11 +8,11 @@ import triton.language as tl
 triton.runtime.jit
 
 
-from tritonix.matrix.mma import matmul_kernel
+from tritonix.mma.dense import matmul_kernel
 
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
-DTYPE = torch.float32
+DTYPE = torch.float16
 FLOAT_SIZE = torch.finfo(DTYPE).bits // 8
 print(f"Using device {DEVICE}, dtype {DTYPE}, {FLOAT_SIZE} bytes.")
 m = 1024

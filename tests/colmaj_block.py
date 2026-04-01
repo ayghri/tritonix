@@ -149,7 +149,7 @@ def create_block_sparse_b(dense_b, B_K, B_N, P, device="cuda"):
 
 def main():
     M, K, N = 1024, 1024, 512
-    B_K, B_N = 32, 32
+    B_K, B_N = 16, 16
     sparsity = 0.5
     P = int((K // B_K) * sparsity)
     if P == 0:

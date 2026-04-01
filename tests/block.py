@@ -56,7 +56,6 @@ def prepare_B(dense_b, block_k, block_n, p):
     return b_values.cuda(), b_metadata.cuda()
 
 
-# (The Triton kernel definition from before)
 @triton.jit
 def block_mma_kernel(
     a_ptr,

@@ -33,7 +33,7 @@ def get_gemm_splitk_config(
 
 def get_autotune_configs():
     return [
-        get_gemm_config(32, 32, 256, 8, 2, 4),
+        get_gemm_config(32, 32, 32, 8, 2, 4),
         get_gemm_config(32, 64, 64, 24, 1, 8),
         get_gemm_config(64, 32, 16, 8, 4, 4),
         get_gemm_config(64, 32, 32, 8, 4, 4),
@@ -45,16 +45,11 @@ def get_autotune_configs():
         get_gemm_config(128, 64, 32, 8, 4, 4),
         get_gemm_config(128, 64, 64, 8, 4, 4),
         get_gemm_config(128, 64, 64, 8, 8, 4),
-        # get_gemm_config(128, 128, 32, 8, 4, 2),
-        # get_gemm_config(128, 128, 32, 8, 4, 4),
-        # get_gemm_config(128, 128, 32, 4, 4, 4),
-        # get_gemm_config(128, 128, 32, 8, 4, 4),
-        # get_gemm_config(128, 128, 64, 8, 4, 4),
-        # get_gemm_config(128, 128, 64, 4, 4, 4),
-        # get_gemm_config(128, 128, 64, 8, 4, 16),
-        # get_gemm_config(128, 128, 64, 8, 3, 4),
-        # get_gemm_config(128, 128, 64, 16, 2, 4),
-        # get_gemm_config(128, 128, 128, 8, 2, 4),
+        get_gemm_config(128, 128, 32, 8, 4, 2),
+        get_gemm_config(128, 128, 32, 8, 4, 4),
+        get_gemm_config(128, 128, 32, 8, 4, 4),
+        get_gemm_config(128, 128, 64, 8, 8, 4),
+        get_gemm_config(128, 128, 64, 4, 8, 4),
     ]
 
 

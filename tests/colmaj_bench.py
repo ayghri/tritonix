@@ -4,11 +4,9 @@ import triton.language as tl
 from triton.testing import do_bench
 
 
-
 DTYPE = torch.float16
-# ---------------------------------------------------------------------------
-# The Vectorized Triton Kernel (from previous response)
-# ---------------------------------------------------------------------------
+
+
 @triton.jit
 def dense_col_major_x_block_sparse_vectorized_kernel(
     a_ptr,
@@ -103,9 +101,7 @@ def create_block_sparse_b_and_dense_b(K, N, B_K, B_N, P, device="cuda"):
     ].sort()[0]
 
     # This will be the dense version for PyTorch
-    B_dense_reconstructed = torch.zeros(
-        (K, N), device=device, dtype=DTYPE
-    )
+    B_dense_reconstructed = torch.zeros((K, N), device=device, dtype=DTYPE)
 
     for j in range(num_block_cols):
         for p_idx in range(P):
