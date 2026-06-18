@@ -1,13 +1,14 @@
 import random
-import itertools
 from typing import Dict, Tuple
 
+from tritonix.utils.spaces import SpaceConfig
 
-def compare_failure_config(failure: Tuple[int], candidate: Tuple[int]) -> bool:
+
+def _compare_failure_config(failure: Tuple[int], candidate: Tuple[int]) -> bool:
     return all(c >= f for c, f in zip(candidate, failure))
 
 
-def compare_failure_dim(failure: int, candidate: int, rank: int = 0) -> bool:
+def _compare_failure_dim(failure: int, candidate: int, rank: int = 0) -> bool:
     return candidate >= failure
 
 
@@ -18,32 +19,29 @@ class MonotonicCascadeTrie:
 
     def __init__(
         self,
-        space_shape,
-        config_comparison_func=compare_failure_config,
-        dimension_comparison_func=compare_failure_dim,
+        space: SpaceConfig,
+        config_comparison_func=_compare_failure_config,
+        dimension_comparison_func=_compare_failure_dim,
     ):
-        if not all(isinstance(s, int) and s > 0 for s in space_shape):
-            raise ValueError(
-                "space_shape must be a tuple of positive integers."
-            )
-        self.shape = space_shape
-        self.dimensions = len(space_shape)
+
+        self.shape = space.shape
+        self.dimensions = len(self.shape)
         self._minimal_failures = []
         self._failure_trie = {}
         self._FAILURE_LEAF = {"_fail_": True}
         self._config_compare = config_comparison_func
         self._dim_compare = dimension_comparison_func
 
-    def is_pruned(self, config):
+    def is_pruned(self, config_idx):
         """
         Checks if a full configuration is pruned by any known failure.
         A configuration is pruned if it is element-wise >= any minimal failure.
         """
-        if len(config) != self.dimensions:
+        if len(config_idx) != self.dimensions:
             raise ValueError(
                 f"is_pruned expects a full-length config of length {self.dimensions}"
             )
-        return self._recursive_check(config, self._failure_trie)
+        return self._recursive_check(config_idx, self._failure_trie)
 
     def _recursive_check(self, config: Tuple, node: Dict, rank=0) -> bool:
         if node.get("_fail_"):
@@ -138,55 +136,90 @@ class MonotonicCascadeTrie:
         def _backtrack(prefix):
             if self._is_prefix_doomed(prefix):
                 return
-
             if len(prefix) == self.dimensions:
                 yield prefix
                 return
-
             for i in range(self.shape[len(prefix)]):
                 yield from _backtrack(prefix + (i,))
 
         yield from _backtrack(tuple())
 
+    def generate_all_unpruned_midpoint(self):
+        def _midpoint_order(n):
+            mid = n // 2
+            yield mid
+            lo, hi = mid - 1, mid + 1
+            while lo >= 0 or hi < n:
+                if lo >= 0:
+                    yield lo
+                    lo -= 1
+                if hi < n:
+                    yield hi
+                    hi += 1
 
-# --- Corrected Example Usage and Output ---
-if __name__ == "__main__":
-    shape = (4, 4, 3)
-    trie = MonotonicCascadeTrie(shape)
+        def _backtrack(prefix):
+            if self._is_prefix_doomed(prefix):
+                return
+            if len(prefix) == self.dimensions:
+                yield prefix
+                return
+            for i in _midpoint_order(self.shape[len(prefix)]):
+                yield from _backtrack(prefix + (i,))
 
-    print(f"Initialized Trie for space of shape {shape}")
-    print("Is (2, 2, 1) pruned initially?", trie.is_pruned((2, 2, 1)))
+        yield from _backtrack(tuple())
 
-    print("\n--- Pruning a high-level config ---: ", (2, 1, 0))
-    trie.prune((2, 1, 0))
-    print("Is (1, 3, 2) pruned?", trie.is_pruned((1, 3, 2)))
-    print("Is (3, 0, 1) pruned?", trie.is_pruned((3, 0, 1)))
 
-    print("\n--- Pruning a more specific config ---:", (1, 2, 1))
-    trie.prune((1, 2, 1))
-    print("Is (1, 2, 0) pruned?", trie.is_pruned((1, 2, 0)))
-    print("Is (1, 3, 1) pruned?", trie.is_pruned((1, 3, 1)))
-    print("minimal failures after pruning:", trie._minimal_failures)
+class CoordinateUnimodalFunction:
+    """Prune a search space using coordinate-wise unimodality.
 
-    print("\n--- Pruning a config that makes another redundant ---:", (1, 2, 0))
-    # This new rule (1, 1, 0) makes the old rule (1, 2, 1) obsolete.
-    trie.prune((1, 2, 0))
-    print("minimal failures after pruning:", trie._minimal_failures)
-    print(
-        "Is (1, 2, 1) pruned now (by the new rule)?", trie.is_pruned((1, 2, 1))
-    )
+    Assumes that for each parameter d, with all others fixed (a "slice"),
+    the function value is unimodal — a single minimum with non-decreasing
+    tails on both sides.
 
-    print("\n--- Generation Methods Demo ---")
+    After each observation, per-dimension bounds [lo, hi] are tightened:
+      - If a value to the right of the best is worse, the upper bound drops.
+      - If a value to the left of the best is worse, the lower bound rises.
+    Any config outside those bounds in any dimension is pruned.
+    """
 
-    k = 30
-    print(f"\n1. Deterministic Generation (first {k} of all unpruned):")
-    unpruned_generator = trie.generate_all_unpruned()
-    for i, config in enumerate(itertools.islice(unpruned_generator, k)):
-        print(f"  {i + 1}: {config}")
+    def __init__(self, space: SpaceConfig):
+        self.n_dims = len(space.shape)
+        self.dim_sizes = list(space.shape)
+        self._obs: list[dict] = [{} for _ in range(self.n_dims)]
+        self._ranges: list[dict] = [{} for _ in range(self.n_dims)]
 
-    print("\n2. Random Unpruned Generation:")
-    for i in range(5):
-        print(f"  Random sample {i + 1}: {trie.get_random_unpruned()}")
+    def record(self, config_idx: tuple[int, ...], value: float):
+        for d in range(self.n_dims):
+            slice_key = config_idx[:d] + config_idx[d + 1 :]
+            obs = self._obs[d].setdefault(slice_key, {})
+            obs[config_idx[d]] = value
 
-    print("\n3. Mid-Point Unpruned Generation:")
-    print(f"  Mid-point sample: {trie.get_mid_point_unpruned()}")
+            if len(obs) < 2:
+                continue
+
+            best_idx = min(obs, key=obs.__getitem__)
+            best_val = obs[best_idx]
+
+            lo, hi = 0, self.dim_sizes[d] - 1
+
+            for i in sorted(i for i in obs if i > best_idx):
+                if obs[i] > best_val:
+                    hi = i - 1
+                    break
+
+            for i in sorted((i for i in obs if i < best_idx), reverse=True):
+                if obs[i] > best_val:
+                    lo = i + 1
+                    break
+
+            if lo > 0 or hi < self.dim_sizes[d] - 1:
+                self._ranges[d][slice_key] = (lo, hi)
+
+    def is_pruned(self, config_idx: tuple[int, ...]) -> bool:
+        for d in range(self.n_dims):
+            slice_key = config_idx[:d] + config_idx[d + 1 :]
+            if slice_key in self._ranges[d]:
+                lo, hi = self._ranges[d][slice_key]
+                if config_idx[d] < lo or config_idx[d] > hi:
+                    return True
+        return False

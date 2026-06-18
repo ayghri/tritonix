@@ -10,7 +10,7 @@ import time
 
 from tritonix.matrix.mma import matmul_kernel
 from tritonix.matrix.mma import gemm_splitk_kernel
-from tritonix.utils.trie import MonotonicCascadeTrie
+from tritonix.utils.pruners import MonotonicCascadeTrie
 
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()

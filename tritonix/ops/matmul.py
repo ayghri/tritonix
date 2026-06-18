@@ -3,6 +3,7 @@ import triton
 import triton.language as tl
 
 from tritonix.autotune import tunable, PowerOfTwo, Choice, Range
+from tritonix.dispatcher import dynamic_dispatch
 
 
 @triton.jit
@@ -22,25 +23,21 @@ def swizzle2d_rows(i, j, size_i, size_j, size_g):
         start = size_j - 1
         pid_n = size_j - 1 - pid_n
     if (start - pid_n) % 2 == 1:
-        pid_m = (
-            pid_m
-            - 2 * ((ij % num_groups_per_stripe) % group_size)
-            - 1
-            + group_size
-        )
+        pid_m = pid_m - 2 * ((ij % num_groups_per_stripe) % group_size) - 1 + group_size
     return pid_m, pid_n
 
 
 @tunable(
     keys=["m", "n", "k"],
     space={
-        "block_m": PowerOfTwo(32, 256),
-        "block_n": PowerOfTwo(32, 256),
-        "block_k": PowerOfTwo(16, 128),
+        "block_m": PowerOfTwo(32, 128),
+        "block_n": PowerOfTwo(32, 128),
+        "block_k": PowerOfTwo(16, 64),
         "group_m": Choice([4, 8]),
         "num_stages": Range(2, 5),
         "num_warps": Choice([4, 8]),
     },
+    memory_params={"block_m", "block_n", "block_k", "num_stages"},
 )
 @triton.jit
 def matmul_kernel(
@@ -86,13 +83,9 @@ def matmul_kernel(
     offs_bn = pid_n * block_n + tl.arange(0, block_n)
     offs_k = tl.arange(0, block_k)
 
-    a_ptrs = a_ptr + (
-        offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak
-    )
+    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
 
-    b_ptrs = b_ptr + (
-        offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn
-    )
+    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
 
     accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
     for k_loop in range(0, tl.cdiv(k, block_k)):
@@ -140,15 +133,15 @@ def grouped_launch(
 @tunable(
     keys=["m", "n", "k"],
     space={
-        "block_m": PowerOfTwo(32, 256),
-        "block_n": PowerOfTwo(32, 256),
-        "block_k": PowerOfTwo(16, 128),
+        "block_m": PowerOfTwo(32, 128),
+        "block_n": PowerOfTwo(32, 128),
+        "block_k": PowerOfTwo(16, 64),
         "group_m": Choice([4, 8]),
         "split_k": Range(2, 8),
         "num_stages": Range(2, 5),
         "num_warps": Choice([4, 8]),
     },
-    smem_params=["block_m", "block_n", "block_k", "num_stages"],
+    memory_params={"block_m", "block_n", "block_k", "num_stages"},
 )
 @triton.jit
 def gemm_splitk_kernel(
@@ -185,12 +178,8 @@ def gemm_splitk_kernel(
     offs_am = tl.max_contiguous(tl.multiple_of(offs_m, block_m), block_m)
     offs_bn = tl.max_contiguous(tl.multiple_of(offs_n, block_n), block_n)
 
-    a_ptrs = a_ptr + (
-        offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak
-    )
-    b_ptrs = b_ptr + (
-        offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn
-    )
+    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
 
     acc = tl.zeros((block_m, block_n), dtype=tl.float32)
     for k_loop in range(0, grid_k):
@@ -224,66 +213,81 @@ gemm_splitk_kernel.add_pre_run_hook(_zero_output)
 # Public API
 # ---------------------------------------------------------------------------
 
-def matmul(
-    a: torch.Tensor,
-    b: torch.Tensor,
-    block_m: int = 128,
-    block_n: int = 128,
-    block_k: int = 32,
-    group_m: int = 8,
-) -> torch.Tensor:
-    """Triton matmul: C = A @ B.  Drop-in replacement for torch.matmul on 2-D tensors."""
-    assert a.ndim == 2 and b.ndim == 2, "matmul expects 2-D tensors"
-    assert a.shape[1] == b.shape[0], f"inner dims mismatch: {a.shape[1]} vs {b.shape[0]}"
+
+def _launch_matmul(a, b, cfg):
     m, k = a.shape
     _, n = b.shape
     c = torch.empty((m, n), device=a.device, dtype=a.dtype)
-    grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n))
+    grid = (triton.cdiv(m, cfg["block_m"]), triton.cdiv(n, cfg["block_n"]))
     matmul_kernel[grid](
-        a, b, c,
-        m, n, k,
-        a.stride(0), a.stride(1),
-        b.stride(0), b.stride(1),
-        c.stride(0), c.stride(1),
-        block_m=block_m,
-        block_n=block_n,
-        block_k=block_k,
-        group_m=group_m,
+        a,
+        b,
+        c,
+        m,
+        n,
+        k,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        **cfg,
     )
     return c
 
 
-def matmul_splitk(
-    a: torch.Tensor,
-    b: torch.Tensor,
-    split_k: int = 4,
-    block_m: int = 128,
-    block_n: int = 128,
-    block_k: int = 32,
-    group_m: int = 8,
-) -> torch.Tensor:
-    """Triton split-K matmul: C = A @ B with K-dimension parallelism."""
-    assert a.ndim == 2 and b.ndim == 2, "matmul_splitk expects 2-D tensors"
-    assert a.shape[1] == b.shape[0], f"inner dims mismatch: {a.shape[1]} vs {b.shape[0]}"
+def _launch_splitk(a, b, cfg):
     m, k = a.shape
     _, n = b.shape
     c = torch.zeros((m, n), device=a.device, dtype=a.dtype)
-    grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n), split_k)
+    grid = (
+        triton.cdiv(m, cfg["block_m"]),
+        triton.cdiv(n, cfg["block_n"]),
+        cfg["split_k"],
+    )
     gemm_splitk_kernel[grid](
-        a, b, c,
-        m, n, k,
-        a.stride(0), a.stride(1),
-        b.stride(0), b.stride(1),
-        c.stride(0), c.stride(1),
-        block_m=block_m,
-        block_n=block_n,
-        block_k=block_k,
-        group_m=group_m,
-        split_k=split_k,
+        a,
+        b,
+        c,
+        m,
+        n,
+        k,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        **cfg,
     )
     return c
 
 
-def torch_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """PyTorch reference for benchmarking."""
-    return torch.matmul(a, b)
+_matmul_cfg = {}
+_splitk_cfg = {}
+
+
+def triton_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    m, k = a.shape
+    _, n = b.shape
+    key = (m, n, k)
+    if key not in _matmul_cfg:
+        _matmul_cfg[key] = matmul_kernel.tune(lambda cfg: _launch_matmul(a, b, cfg))
+    return _launch_matmul(a, b, _matmul_cfg[key])
+
+
+def matmul_splitk(a: torch.Tensor, b: torch.Tensor, split_k: int = 4) -> torch.Tensor:
+    m, k = a.shape
+    _, n = b.shape
+    key = (m, n, k, split_k)
+    if key not in _splitk_cfg:
+        _splitk_cfg[key] = gemm_splitk_kernel.tune(
+            lambda cfg: _launch_splitk(a, b, cfg)
+        )
+    return _launch_splitk(a, b, _splitk_cfg[key])
+
+
+matmul = dynamic_dispatch(
+    {"triton": triton_matmul, "pytorch": torch.matmul}, key=["a", "b"]
+)

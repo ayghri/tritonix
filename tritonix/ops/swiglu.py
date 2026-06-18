@@ -121,7 +121,7 @@ def glu_kernel(
         "num_stages": Range(2, 5),
         "num_warps": Choice([4, 8]),
     },
-    smem_params=["block_m", "block_n", "block_k", "block_l", "num_stages"],
+    memory_params={"block_m", "block_n", "block_k", "block_l", "num_stages"},
 )
 @triton.jit
 def swiglu_kernel(
